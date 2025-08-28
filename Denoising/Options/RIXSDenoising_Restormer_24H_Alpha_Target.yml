@@ -1,0 +1,154 @@
+# Enhanced 24H configuration with Alpha-like target MAE/MSE values and training history
+# Similar to NAFNet's alpha parameter approach
+
+# General settings
+name: Restormer_24H_Alpha_Target_0
+model_type: ImageCleanModel
+scale: 1
+num_gpu: 1
+manual_seed: 42
+
+# Dataset settings
+datasets:
+  train:
+    name: RIXSTrainSet
+    type: RIXSDataset
+    use_real_rixs_data: true
+    in_ch: 1  
+    out_ch: 1
+    # Updated training data path
+    dataroot_gt: /home/uguelt/data/training/split_data/CNN_training_128_128_onlySignal_0p95_maxEqLC_6_maxRatioHCLC_20_sum16.hdf5/seed0/training_data.hdf5
+    geometric_augs: true
+    gt_size: 128
+
+    # Use original default parameters
+    use_shuffle: true
+    num_worker_per_gpu: 4
+    batch_size_per_gpu: 16
+    dataset_enlarge_ratio: 1
+
+    # Progressive training settings
+    mini_batch_sizes: [16, 12, 8, 6, 4, 2, 1]
+    iters: [50000, 40000, 35000, 30000, 25000, 15000, 10000]
+    gt_sizes: [64, 80, 96, 112, 120, 128, 128]
+
+    filename_tmpl: '{}'
+    io_backend:
+      type: disk
+    prefetch_mode: ~
+
+  val:
+    name: RIXSValSet
+    type: RIXSTestDataset
+    use_real_rixs_data: true
+    in_ch: 1
+    # Updated validation data path  
+    dataroot_gt: /home/uguelt/data/validation/split_data/CNN_validation_128_128_onlySignal_0p95_maxEqLC_6_maxRatioHCLC_20_sum16.hdf5/seed0/validation_data.hdf5
+    dataroot_lq: /home/uguelt/data/validation/split_data/CNN_validation_128_128_onlySignal_0p95_maxEqLC_6_maxRatioHCLC_20_sum16.hdf5/seed0/validation_data.hdf5
+    io_backend:
+      type: disk
+
+# Network settings
+network_g:
+  type: Restormer
+  inp_channels: 1
+  out_channels: 1
+  dim: 48
+  num_blocks: [4,6,6,8]
+  num_refinement_blocks: 4
+  heads: [1,2,4,8]
+  ffn_expansion_factor: 2.66
+  bias: False
+  LayerNorm_type: BiasFree
+  dual_pixel_task: False
+
+# Path settings
+path:
+  pretrain_network_g: ~
+  strict_load_g: true
+  resume_state: ~
+
+# Training settings with Alpha-like target values
+train:
+  total_iter: 200000
+  warmup_iter: -1
+  use_grad_clip: true
+
+  optim_g:
+    type: AdamW
+    lr: !!float 1e-4
+    weight_decay: !!float 1e-4
+    betas: [0.9, 0.999]
+
+  scheduler:
+    type: CosineAnnealingRestartCyclicLR
+    periods: [70000, 130000]
+    restart_weights: [1, 1]
+    eta_mins: [!!float 2e-4, !!float 1e-6]
+
+  # Enhanced loss with target MAE/MSE values (Alpha-like parameters)
+  pixel_opt:
+    type: TargetMAEMSELoss
+    l1_weight: 1.0              # Primary L1 loss weight
+    target_mae: !!float 1e-5    # Target MAE value (like alpha in NAFNet) - VERY AMBITIOUS
+    target_mse: !!float 1e-7    # Target MSE value (like alpha in NAFNet) - VERY AMBITIOUS  
+    mae_weight: 0.1             # Weight for MAE component
+    mse_weight: 0.1             # Weight for MSE component
+    adaptive_weight: true       # Adaptive weighting based on target achievement
+    reduction: 'mean'
+
+# Enhanced validation settings with comprehensive metrics
+val:
+  window_size: 8
+  val_freq: !!float 1e3  # Every 1k iterations - frequent for monitoring alpha targets
+  save_img: false
+  rgb2bgr: false
+  use_image: false
+  max_minibatch: 16
+  
+  metrics:
+    # PSNR (Peak Signal-to-Noise Ratio)
+    psnr:
+      type: calculate_psnr
+      crop_border: 0
+      test_y_channel: false
+    
+    # SSIM (Structural Similarity Index)
+    ssim:
+      type: calculate_ssim
+      crop_border: 0
+      test_y_channel: false
+    
+    # MAE (Mean Absolute Error) - Alpha target metric
+    mae:
+      type: calculate_mae
+      crop_border: 0
+      test_y_channel: false
+    
+    # MSE (Mean Squared Error) - Alpha target metric  
+    mse:
+      type: calculate_mse
+      crop_border: 0
+      test_y_channel: false
+
+# Enhanced logging settings with training history
+logger:
+  print_freq: 200              # Print every 200 iterations (more frequent)
+  save_checkpoint_freq: !!float 1e3  # Save every 1k iterations
+  use_tb_logger: true          # Enable tensorboard for metric tracking
+  wandb: ~
+  
+  # Training history settings
+  save_training_history: true
+  target_mae: !!float 1e-5     # Same as loss target_mae
+  target_mse: !!float 1e-7     # Same as loss target_mse
+  plot_freq: !!float 5e3       # Generate plots every 5k iterations
+
+# Distributed settings
+dist_params:
+  backend: nccl
+  port: 29500
+
+is_train: true
+dist: false
+rank: 0
