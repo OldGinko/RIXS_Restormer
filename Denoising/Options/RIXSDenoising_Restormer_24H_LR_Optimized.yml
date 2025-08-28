@@ -1,0 +1,130 @@
+# RIXS Denoising with Restormer - 24 Hour LR Optimized Run
+name: RIXSDenoising_Restormer_24H_LR_Opt
+model_type: ImageCleanModel
+scale: 1
+num_gpu: 1
+manual_seed: 42
+
+# Dataset settings
+datasets:
+  train:
+    name: RIXSTrainSet
+    type: RIXSDataset
+    use_real_rixs_data: true  # Use real HC/LC RIXS data
+    in_ch: 1
+    out_ch: 1
+    dataroot_gt: /home/uguelt/data/training/split_data/CNN_training_128_128_onlySignal_0p95_maxEqLC_6_maxRatioHCLC_20_sum16.hdf5/seed0/training_data.hdf5
+    # dataroot_lq: same file contains both HC and LC data
+    geometric_augs: true
+    gt_size: 128
+    
+    # Data loader settings - OPTIMIZED FOR EFFICIENCY
+    use_shuffle: true
+    num_worker_per_gpu: 4  # Match CPU allocation
+    batch_size_per_gpu: 16  # Keep larger batch size for GPU efficiency
+    dataset_enlarge_ratio: 1
+    
+    # Progressive training - OPTIMIZED FOR 24H RUN
+    mini_batch_sizes: [16, 12, 8, 6, 4, 2, 1]
+    iters: [50000, 40000, 35000, 30000, 25000, 15000, 10000]  # Total: 205k iterations
+    gt_sizes: [64, 80, 96, 112, 120, 128, 128]
+    
+    filename_tmpl: '{}'
+    io_backend:
+      type: disk
+    prefetch_mode: ~
+
+  val:
+    name: RIXSValSet
+    type: RIXSTestDataset
+    use_real_rixs_data: true  # Use real HC/LC RIXS data
+    in_ch: 1
+    dataroot_gt: /home/uguelt/data/validation/split_data/CNN_validation_128_128_onlySignal_0p95_maxEqLC_6_maxRatioHCLC_20_sum16.hdf5/seed0/validation_data.hdf5
+    dataroot_lq: /home/uguelt/data/validation/split_data/CNN_validation_128_128_onlySignal_0p95_maxEqLC_6_maxRatioHCLC_20_sum16.hdf5/seed0/validation_data.hdf5
+    io_backend:
+      type: disk
+
+# Network architecture
+network_g:
+  type: Restormer
+  inp_channels: 1
+  out_channels: 1
+  dim: 48
+  num_blocks: [4,6,6,8]
+  num_refinement_blocks: 4
+  heads: [1,2,4,8]
+  ffn_expansion_factor: 2.66
+  bias: False
+  LayerNorm_type: BiasFree
+  dual_pixel_task: False
+
+# Path settings - Use BasicSR defaults with symbolic link redirection
+path:
+  pretrain_network_g: ~
+  strict_load_g: true
+  resume_state: ~
+  # Let BasicSR use its default paths, but redirect via symbolic link
+
+# Training settings
+train:
+  ema_decay: 0.999
+  optim_g:
+    type: AdamW
+    lr: !!float 1e-4  # OPTIMIZED: More conservative learning rate
+    weight_decay: !!float 1e-3
+    betas: [0.9, 0.999]
+
+  # OPTIMIZED: 3-stage learning rate schedule with warmup
+  scheduler:
+    type: CosineAnnealingRestartCyclicLR
+    periods: [80000, 140000, 180000]  # OPTIMIZED: 3-stage decay for better convergence
+    restart_weights: [1, 1, 1]
+    eta_mins: [!!float 5e-5, !!float 1e-5, !!float 1e-6]  # OPTIMIZED: More gradual decay
+
+  # OPTIMIZED: Add warmup for stable training start
+  warmup_iter: 5000  # 5k iterations warmup
+  total_iter: 200000  # Keep same total iterations
+
+  # Loss
+  pixel_opt:
+    type: L1Loss
+    loss_weight: 1
+    reduction: mean
+
+  # Augmentation
+  mixing_augs:
+    mixup: true
+    mixup_beta: 1.2
+    use_identity: true
+
+# Validation settings - MORE FREQUENT VALIDATION
+val:
+  window_size: 8
+  val_freq: !!float 2e3  # Every 2k iterations
+  save_img: false
+  rgb2bgr: false
+  use_image: false
+  max_minibatch: 16
+  
+  metrics:
+    psnr:
+      type: calculate_psnr
+      crop_border: 0
+      test_y_channel: false
+
+# Logging settings - MORE FREQUENT SAVES
+logger:
+  print_freq: 500  # Print every 500 iterations
+  save_checkpoint_freq: !!float 2e3  # Save every 2k iterations
+  use_tb_logger: false
+  wandb: ~
+
+# Distributed settings
+dist_params:
+  backend: nccl
+  port: 29500
+
+is_train: true
+dist: false
+rank: 0
+world_size: 1
